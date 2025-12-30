@@ -1,155 +1,275 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <meta charset="UTF-8">
-    <title>PHD Lab - 안정화 버전</title>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        body { font-family: sans-serif; background: #f0f4f8; padding: 20px; }
-        .panel { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); max-width: 850px; margin: 0 auto 20px; }
-        .stats-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 20px; }
-        .stat-card { padding: 15px; border-radius: 10px; text-align: center; color: white; transition: 0.3s; }
-        .acc-color { background: #007bff; } .mic-color { background: #6f42c1; } .temp-color { background: #fd7e14; }
-        .stat-val { font-size: 2rem; font-weight: bold; }
-        .ai-box { background: #e3f2fd; border-left: 5px solid #1976d2; padding: 15px; border-radius: 8px; font-weight: bold; }
-        canvas { max-height: 140px; }
-        button { padding: 12px 24px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; background: #007bff; color: white; }
-    </style>
+  <meta charset="UTF-8" />
+  <title>PHD Lab - 실시간 분석 시스템 (Optimized)</title>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: 'Pretendard', sans-serif; background: #f0f4f8; padding: 20px; color: #333; }
+    .panel { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); max-width: 900px; margin: 0 auto 20px; }
+    .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px; }
+    .stat-card { padding: 15px; border-radius: 12px; text-align: center; color: white; }
+    .acc-color { background: #007bff; } .mic-color { background: #6f42c1; } .temp-color { background: #fd7e14; }
+    .stat-label { font-size: 0.85rem; opacity: 0.9; margin-bottom: 5px; display: block; }
+    .stat-main { font-size: 1.8rem; font-weight: 800; display: block; }
+    .stat-sub { font-size: 0.9rem; margin-top: 5px; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 5px; display: block; }
+    .ai-box { background: #e3f2fd; border-left: 5px solid #1976d2; padding: 15px; border-radius: 8px; font-weight: 500; }
+    canvas { max-height: 160px; width: 100% !important; }
+    .controls { text-align: center; margin-bottom: 20px; }
+    button { padding: 12px 24px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; transition: 0.2s; }
+    button:active { transform: scale(0.95); }
+  </style>
 </head>
 <body>
-
-    <div class="panel">
-        <h2 style="text-align:center;">🔬 고성능 AI-IoT 데이터 파이프라인</h2>
-        <div style="text-align:center; margin-bottom:20px;">
-            <button id="btnConnect">마이크로비트 연결</button>
-            <button id="btnDownload" style="background:#28a745; margin-left:10px;" disabled>데이터 저장</button>
-        </div>
-        
-        <div class="stats-row">
-            <div class="stat-card acc-color">가속도 평균<br><span class="stat-val" id="avgAcc">0</span></div>
-            <div class="stat-card mic-color">소음 평균<br><span class="stat-val" id="avgMic">0</span></div>
-            <div class="stat-card temp-color">온도 평균<br><span class="stat-val" id="avgTemp">0</span></div>
-        </div>
-
-        <div class="ai-box">
-            🤖 AI 리포트: <span id="aiReport" style="font-weight: normal;">연결 대기 중...</span>
-        </div>
+  <div class="panel">
+    <h2 style="text-align:center; margin-top:0;">📡 멀티센서 실시간 분석 파이프라인</h2>
+    <div class="controls">
+      <button id="btnConnect" style="background:#007bff; color:white;">마이크로비트 연결</button>
+      <button id="btnDownload" style="background:#28a745; color:white; margin-left:10px;" disabled>로그 저장 (JSONL)</button>
     </div>
 
-    <div class="panel"><canvas id="accChart"></canvas></div>
-    <div class="panel"><canvas id="micChart"></canvas></div>
-    <div class="panel"><canvas id="tempChart"></canvas></div>
+    <div class="stats-grid">
+      <div class="stat-card acc-color">
+        <span class="stat-label">가속도 (Acc)</span>
+        <span class="stat-main" id="curAcc">0</span>
+        <span class="stat-sub">5초 평균: <span id="avgAcc">0.0</span></span>
+      </div>
+      <div class="stat-card mic-color">
+        <span class="stat-label">소음 (Mic)</span>
+        <span class="stat-main" id="curMic">0</span>
+        <span class="stat-sub">5초 평균: <span id="avgMic">0.0</span></span>
+      </div>
+      <div class="stat-card temp-color">
+        <span class="stat-label">온도 (Temp)</span>
+        <span class="stat-main" id="curTemp">0</span>
+        <span class="stat-sub">5초 평균: <span id="avgTemp">0.0</span></span>
+      </div>
+    </div>
 
-    <script>
-        const firebaseConfig = { databaseURL: "https://microbit-lab-default-rtdb.firebaseio.com" };
-        const API_KEY = "AIzaSyBAsD0zi_FndXgihSx-c2sBb_6Xtmj33aI";
-        
-        firebase.initializeApp(firebaseConfig);
-        const db = firebase.database();
-        const studentId = "Researcher_1"; 
+    <div class="ai-box">
+      🤖 <strong>AI Insight:</strong>
+      <span id="aiReport" style="font-weight: 400;">(성능 안정화 후 AI 연결 예정)</span>
+    </div>
+  </div>
 
-        let sessionLog = [];
-        let windows = { acc: [], mic: [], temp: [] };
-        let lastAiTime = 0;
+  <div class="panel"><canvas id="accChart"></canvas></div>
+  <div class="panel"><canvas id="micChart"></canvas></div>
+  <div class="panel"><canvas id="tempChart"></canvas></div>
 
-        // 차트 초기화 (성능 최적화: 데이터 포인트를 줄임)
-        const charts = {};
-        function setupCharts() {
-            const config = (label, color, min, max) => ({
-                type: 'line',
-                data: { labels: new Array(20).fill(""), datasets: [{ label, data: new Array(20).fill(0), borderColor: color, tension: 0.1, pointRadius: 2 }] },
-                options: { responsive: true, animation: false, scales: { y: { min, max } } }
-            });
-            charts.acc = new Chart(document.getElementById('accChart'), config('가속도', '#007bff', 800, 1200));
-            charts.mic = new Chart(document.getElementById('micChart'), config('소음', '#6f42c1', 0, 150));
-            charts.temp = new Chart(document.getElementById('tempChart'), config('온도', '#fd7e14', 15, 40));
+  <script>
+    /********************
+     * 0) 성능 파라미터
+     ********************/
+    const UI_FPS = 10;                 // UI/차트 갱신 빈도 (초당 10회)
+    const UI_INTERVAL_MS = 1000 / UI_FPS;
+    const FIREBASE_INTERVAL_MS = 500;  // Firebase 전송 빈도 (초당 2회)
+    const AVG_WINDOW_SIZE = 50;        // 약 5초 (샘플링이 대략 10Hz~20Hz면 적당)
+    const CHART_POINTS = 60;           // 차트 포인트 수 (너무 크면 무거움)
+
+    /********************
+     * 1) 초기 설정
+     ********************/
+    const firebaseConfig = { databaseURL: "https://microbit-lab-default-rtdb.firebaseio.com" };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    const studentId = "Researcher_1";
+
+    let sessionLog = [];
+
+    // 최신값(수신 루프는 이 값만 갱신)
+    let latestData = { acc: 1000, mic: 0, temp: 25, ts: Date.now() };
+    let hasData = false;
+
+    // 데이터 끊김 시 보정값
+    let lastValues = { acc: 1000, mic: 0, temp: 25 };
+
+    // 이동평균용: ring buffer + running sum (O(1))
+    const avgState = {
+      acc: { buf: new Array(AVG_WINDOW_SIZE).fill(0), idx: 0, filled: 0, sum: 0 },
+      mic: { buf: new Array(AVG_WINDOW_SIZE).fill(0), idx: 0, filled: 0, sum: 0 },
+      temp:{ buf: new Array(AVG_WINDOW_SIZE).fill(0), idx: 0, filled: 0, sum: 0 }
+    };
+
+    function pushAvg(key, value) {
+      const s = avgState[key];
+      // 제거될 값
+      const old = s.buf[s.idx];
+      s.sum -= old;
+
+      // 새 값 넣기
+      s.buf[s.idx] = value;
+      s.sum += value;
+
+      s.idx = (s.idx + 1) % AVG_WINDOW_SIZE;
+      if (s.filled < AVG_WINDOW_SIZE) s.filled++;
+
+      return s.sum / s.filled;
+    }
+
+    /********************
+     * 2) 차트 초기화 (최적화)
+     ********************/
+    const charts = {};
+    function setupCharts() {
+      const baseConfig = (label, min, max) => ({
+        type: 'line',
+        data: {
+          labels: new Array(CHART_POINTS).fill(""),
+          datasets: [{
+            label,
+            data: new Array(CHART_POINTS).fill(null),
+            tension: 0.2,
+            pointRadius: 0,
+            borderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          animation: false,
+          parsing: false,
+          normalized: true,
+          maintainAspectRatio: false,
+          scales: { y: { min, max }, x: { display: false } },
+          plugins: { legend: { display: true } }
         }
-        setupCharts();
+      });
 
-        async function runAI(data) {
-            if (Date.now() - lastAiTime < 20000) return; 
-            lastAiTime = Date.now();
-            
-            try {
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
-                const response = await fetch(url, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: `데이터: 가속도${data.acc}, 소음${data.mic}, 온도${data.temp}. 현재 상황을 15자 내로 요약해.` }] }]
-                    })
-                });
-                const result = await response.json();
-                const aiText = result.candidates[0].content.parts[0].text.trim();
-                document.getElementById('aiReport').innerText = aiText;
-                db.ref(`class/${studentId}/ai_comment`).set(aiText);
-            } catch (e) { console.error(e); }
+      charts.acc = new Chart(document.getElementById('accChart'), baseConfig('가속도(mg)', 800, 1200));
+      charts.mic = new Chart(document.getElementById('micChart'), baseConfig('소음(lvl)', 0, 150));
+      charts.temp= new Chart(document.getElementById('tempChart'), baseConfig('온도(°C)', 15, 40));
+    }
+    setupCharts();
+
+    // 차트 데이터 push (실제 update는 UI 루프에서만)
+    function pushChart(key, value) {
+      const arr = charts[key].data.datasets[0].data;
+      arr.push(value);
+      if (arr.length > CHART_POINTS) arr.shift();
+    }
+
+    /********************
+     * 3) UI 루프: 초당 10회만 갱신
+     ********************/
+    let lastUiTick = 0;
+    function uiLoop(now) {
+      if (now - lastUiTick >= UI_INTERVAL_MS && hasData) {
+        lastUiTick = now;
+
+        const d = latestData;
+
+        // 현재값 UI
+        document.getElementById('curAcc').innerText = Math.round(d.acc);
+        document.getElementById('curMic').innerText = Math.round(d.mic);
+        document.getElementById('curTemp').innerText = Math.round(d.temp);
+
+        // 평균값 UI (O(1))
+        const aAcc  = pushAvg('acc', d.acc);
+        const aMic  = pushAvg('mic', d.mic);
+        const aTemp = pushAvg('temp', d.temp);
+
+        document.getElementById('avgAcc').innerText  = aAcc.toFixed(1);
+        document.getElementById('avgMic').innerText  = aMic.toFixed(1);
+        document.getElementById('avgTemp').innerText = aTemp.toFixed(1);
+
+        // 차트 데이터만 누적 후, update는 여기서만 1회씩
+        pushChart('acc', d.acc);
+        pushChart('mic', d.mic);
+        pushChart('temp', d.temp);
+
+        charts.acc.update('none');
+        charts.mic.update('none');
+        charts.temp.update('none');
+      }
+      requestAnimationFrame(uiLoop);
+    }
+    requestAnimationFrame(uiLoop);
+
+    /********************
+     * 4) Firebase 전송: 배치(Throttle)
+     ********************/
+    let lastFbTime = 0;
+    function firebaseTick(now) {
+      if (hasData && now - lastFbTime >= FIREBASE_INTERVAL_MS) {
+        lastFbTime = now;
+
+        // “현재 상태”만 간헐적으로 업데이트 (샘플마다 set() 금지!)
+        const d = latestData;
+        db.ref(`class/${studentId}/current`).set(d);
+      }
+      requestAnimationFrame(firebaseTick);
+    }
+    requestAnimationFrame(firebaseTick);
+
+    /********************
+     * 5) Serial 수신 루프: 최대한 가볍게
+     ********************/
+    async function readLoop(port) {
+      const reader = port.readable.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = "";
+      document.getElementById('btnConnect').innerText = "Streaming...";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += value;
+        const lines = buffer.split("\n");
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t) continue;
+
+          try {
+            const raw = JSON.parse(t);
+
+            // 보정(0/NaN 처리)
+            const acc  = (Number(raw.acc)  > 0)  ? Number(raw.acc)  : lastValues.acc;
+            const mic  = (Number(raw.mic)  >= 0) ? Number(raw.mic)  : lastValues.mic;
+            const temp = (Number(raw.temp) > 0)  ? Number(raw.temp) : lastValues.temp;
+
+            const data = { acc, mic, temp, ts: Date.now() };
+            lastValues = { acc, mic, temp };
+
+            // ⭐ 여기서는 "최신값"만 갱신 (UI/차트/파이어베이스는 다른 루프가 처리)
+            latestData = data;
+            hasData = true;
+
+            // 로그는 남기되, 너무 큰 부담이면 샘플링도 가능(아래 주석 참고)
+            sessionLog.push(data);
+
+            document.getElementById('btnDownload').disabled = false;
+          } catch (e) {
+            // 파싱 에러 무시
+          }
         }
+      }
+    }
 
-        async function readLoop(port) {
-            const reader = port.readable.pipeThrough(new TextDecoderStream()).getReader();
-            let buffer = "";
-            document.getElementById('btnConnect').innerText = "데이터 수신 중...";
+    /********************
+     * 6) 버튼 핸들러
+     ********************/
+    document.getElementById('btnConnect').onclick = async () => {
+      const port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 115200 });
+      readLoop(port);
+    };
 
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-                buffer += value;
-                let lines = buffer.split("\n");
-                buffer = lines.pop();
+    document.getElementById('btnDownload').onclick = () => {
+      const blob = new Blob([sessionLog.map(JSON.stringify).join('\n')], { type: 'application/jsonl' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `PHD_Data_${Date.now()}.jsonl`;
+      a.click();
+    };
 
-                for (let line of lines) {
-                    try {
-                        const raw = JSON.parse(line.trim());
-                        
-                        // [핵심] 0값 필터링 및 숫자 변환
-                        const acc = Number(raw.acc) || 0;
-                        const mic = Number(raw.mic) || 0;
-                        const temp = Number(raw.temp) || 0;
-
-                        // 온도가 0도인 비정상 데이터는 평균 계산에서 제외
-                        if (temp > 0) {
-                            ['acc', 'mic', 'temp'].forEach(k => {
-                                let val = (k === 'acc') ? acc : (k === 'mic') ? mic : temp;
-                                windows[k].push(val);
-                                if(windows[k].length > 30) windows[k].shift();
-                                
-                                // 평균 계산
-                                const avg = (windows[k].reduce((a,b)=>a+b,0) / windows[k].length).toFixed(1);
-                                document.getElementById('avg'+k.charAt(0).toUpperCase()+k.slice(1)).innerText = avg;
-                                
-                                // 차트 업데이트 (부담을 줄이기 위해 가끔 건너뛰거나 빠르게 갱신)
-                                charts[k].data.datasets[0].data.push(val);
-                                charts[k].data.datasets[0].data.shift();
-                                charts[k].update('none');
-                            });
-
-                            const dataObj = { acc, mic, temp, ts: Date.now() };
-                            sessionLog.push(dataObj);
-                            db.ref(`class/${studentId}/current`).set(dataObj);
-                            runAI(dataObj);
-                            document.getElementById('btnDownload').disabled = false;
-                        }
-                    } catch(e) {}
-                }
-            }
-        }
-
-        document.getElementById('btnConnect').onclick = async () => {
-            const port = await navigator.serial.requestPort();
-            await port.open({ baudRate: 115200 });
-            readLoop(port);
-        };
-
-        document.getElementById('btnDownload').onclick = () => {
-            const blob = new Blob([sessionLog.map(JSON.stringify).join('\n')], {type: 'application/jsonl'});
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = `data_${Date.now()}.jsonl`;
-            a.click();
-        };
-    </script>
+    /********************
+     * (옵션) 로그가 너무 커질 때:
+     * - sessionLog를 “모든 샘플” 대신 “n개 중 1개만 저장”으로 바꾸면 메모리도 안정됨
+     * 예) let logEvery = 2; let cnt=0; if(++cnt % logEvery===0) sessionLog.push(data);
+     ********************/
+  </script>
 </body>
 </html>
