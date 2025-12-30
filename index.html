@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>연구용 데이터 파이프라인 - 안정화 버전</title>
+    <title>연구용 데이터 파이프라인 - 마스터 버전</title>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -12,29 +12,30 @@
         .stats-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 20px; }
         .stat-card { padding: 15px; border-radius: 10px; text-align: center; color: white; }
         .acc-color { background: #007bff; } .mic-color { background: #6f42c1; } .temp-color { background: #fd7e14; }
+        .stat-val { font-size: 1.8rem; font-weight: bold; }
         .ai-box { background: #e3f2fd; border-left: 5px solid #1976d2; padding: 15px; margin-top: 10px; border-radius: 8px; min-height: 50px; }
-        canvas { max-height: 180px; }
+        canvas { max-height: 180px; width: 100% !important; }
         button { padding: 12px 24px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; }
     </style>
 </head>
 <body>
 
     <div class="panel">
-        <h2 style="text-align:center;">🔬 AI-IoT 실시간 분석 (안정화 버전)</h2>
+        <h2 style="text-align:center;">🔬 AI-IoT 실시간 분석 (마스터 버전)</h2>
         <div style="text-align:center; margin-bottom:20px;">
             <button id="btnConnect" style="background:#007bff; color:white;">기기 연결</button>
             <button id="btnDownload" style="background:#28a745; color:white; margin-left:10px;" disabled>데이터 저장</button>
         </div>
         
         <div class="stats-row">
-            <div class="stat-card acc-color">가속도 (5s Avg)<br><b id="avgAcc">0.0</b><br><small>현재: <span id="curAcc">0</span></small></div>
-            <div class="stat-card mic-color">소음 (5s Avg)<br><b id="avgMic">0.0</b><br><small>현재: <span id="curMic">0</span></small></div>
-            <div class="stat-card temp-color">온도 (5s Avg)<br><b id="avgTemp">0.0</b><br><small>현재: <span id="curTemp">0</span></small></div>
+            <div class="stat-card acc-color">가속도 (5s Avg)<br><span class="stat-val" id="avgAcc">0.0</span><br><small>현재: <span id="curAcc">0</span></small></div>
+            <div class="stat-card mic-color">소음 (5s Avg)<br><span class="stat-val" id="avgMic">0.0</span><br><small>현재: <span id="curMic">0</span></small></div>
+            <div class="stat-card temp-color">온도 (5s Avg)<br><span class="stat-val" id="avgTemp">0.0</span><br><small>현재: <span id="curTemp">0</span></small></div>
         </div>
 
         <div class="ai-box">
             <strong>🤖 AI 분석 결과:</strong>
-            <p id="aiReport">데이터 전송을 기다리는 중입니다...</p>
+            <p id="aiReport">데이터 수집 대기 중...</p>
         </div>
     </div>
 
@@ -43,7 +44,6 @@
     <div class="panel"><canvas id="tempChart"></canvas></div>
 
     <script>
-        // [필독] 주소 끝에 '/'가 있으면 제거하세요.
         const firebaseConfig = { databaseURL: "https://microbit-lab-default-rtdb.firebaseio.com" };
         const GEMINI_API_KEY = "AIzaSyBAsD0zi_FndXgihSx-c2sBb_6Xtmj33aI";
         
@@ -54,15 +54,20 @@
         let sessionLog = [];
         let windows = { acc: [], mic: [], temp: [] };
         let lastAiTime = 0;
-        let isAiCalling = false; // 중복 호출 방지
 
-        // 차트 초기화
+        // 차트 설정 최적화
         const charts = {};
         function setupCharts() {
             const config = (label, color, min, max) => ({
                 type: 'line',
-                data: { labels: new Array(50).fill(""), datasets: [{ label, data: new Array(50).fill(null), borderColor: color, tension: 0.1, pointRadius: 0 }] },
-                options: { scales: { y: { min, max } }, animation: false, responsive: true, maintainAspectRatio: false }
+                data: { labels: new Array(50).fill(""), datasets: [{ label, data: new Array(50).fill(0), borderColor: color, tension: 0, pointRadius: 0, borderWidth: 2 }] },
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false, 
+                    animation: false, // 애니메이션 완전 제거
+                    elements: { line: { tension: 0 } }, // 선 부드럽게 만들기 해제 (성능)
+                    scales: { y: { min, max, ticks: { display: true } }, x: { display: false } }
+                }
             });
             charts.acc = new Chart(document.getElementById('accChart'), config('가속도(mg)', '#007bff', 500, 2500));
             charts.mic = new Chart(document.getElementById('micChart'), config('소음(level)', '#6f42c1', 0, 255));
@@ -71,13 +76,11 @@
         setupCharts();
 
         async function runAI(summary) {
-            // 15초 간격 & 중복 호출 방지
-            if (Date.now() - lastAiTime < 15000 || isAiCalling) return; 
-            isAiCalling = true;
+            if (Date.now() - lastAiTime < 15000) return; 
             lastAiTime = Date.now();
-            document.getElementById('aiReport').innerText = "Gemini AI가 상황을 분석하고 있습니다...";
+            document.getElementById('aiReport').innerText = "AI 분석을 시작합니다...";
 
-            const promptText = `센서 데이터: 가속도 ${summary.acc}, 소음 ${summary.mic}, 온도 ${summary.temp}. 이 수치를 바탕으로 현재 장비의 상태나 연구실 환경을 아주 짧게(30자 내외) 해석해줘.`;
+            const promptText = `가속도:${summary.acc}, 소음:${summary.mic}, 온도:${summary.temp}. 이 데이터를 보고 현재 연구실 상황을 30자 이내로 한 문장 요약해줘.`;
             
             try {
                 const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
@@ -86,29 +89,26 @@
                     body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] })
                 });
                 const res = await resp.json();
-                const comment = res.candidates[0].content.parts[0].text.trim();
-                document.getElementById('aiReport').innerText = comment;
-                db.ref(`class/${studentId}/ai_comment`).set(comment);
-            } catch(e) { 
-                console.error("AI API Error:", e);
-                document.getElementById('aiReport').innerText = "AI 분석 지연 중...";
-            } finally {
-                isAiCalling = false;
-            }
+                if (res.candidates) {
+                    const comment = res.candidates[0].content.parts[0].text.trim();
+                    document.getElementById('aiReport').innerText = comment;
+                    db.ref(`class/${studentId}/ai_comment`).set(comment);
+                }
+            } catch(e) { console.error(e); }
         }
 
         async function readLoop(port) {
             const reader = port.readable.pipeThrough(new TextDecoderStream()).getReader();
             let buffer = "";
-            document.getElementById('btnConnect').innerText = "연결 완료";
+            document.getElementById('btnConnect').innerText = "연결됨";
 
             while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
                 
                 buffer += value;
-                let lines = buffer.split(/\r?\n/); // 줄바꿈 안정적 처리
-                buffer = lines.pop(); 
+                let lines = buffer.split("\n");
+                buffer = lines.pop();
 
                 for (let line of lines) {
                     const trimmed = line.trim();
@@ -116,35 +116,36 @@
                     
                     try {
                         const raw = JSON.parse(trimmed);
-                        const ts = Date.now();
-                        const processed = { ...raw, analysis: {}, ts };
+                        const processed = { 
+                            acc: Number(raw.acc) || 0, // 강제 숫자 변환
+                            mic: Number(raw.mic) || 0,
+                            temp: Number(raw.temp) || 0,
+                            ts: Date.now()
+                        };
                         
                         ['acc', 'mic', 'temp'].forEach(k => {
-                            windows[k].push(raw[k]);
+                            const val = processed[k];
+                            windows[k].push(val);
                             if(windows[k].length > 50) windows[k].shift();
                             
-                            // NaN 방지: 데이터가 있을 때만 평균 계산
-                            const avg = windows[k].length > 0 
-                                ? (windows[k].reduce((a,b)=>a+b,0) / windows[k].length).toFixed(1)
-                                : 0.0;
+                            // 평균 계산 로직 강화 (NaN 방지)
+                            const sum = windows[k].reduce((a, b) => a + b, 0);
+                            const avg = (sum / windows[k].length).toFixed(1);
 
-                            processed.analysis[k+'_avg'] = avg;
-                            document.getElementById('cur'+k.charAt(0).toUpperCase()+k.slice(1)).innerText = raw[k];
+                            document.getElementById('cur'+k.charAt(0).toUpperCase()+k.slice(1)).innerText = val;
                             document.getElementById('avg'+k.charAt(0).toUpperCase()+k.slice(1)).innerText = avg;
                             
-                            // 그래프 끊김 방지
-                            charts[k].data.datasets[0].data.push(raw[k]);
+                            // 그래프 데이터 업데이트
+                            charts[k].data.datasets[0].data.push(val);
                             charts[k].data.datasets[0].data.shift();
-                            charts[k].update('none'); // 성능 최적화
+                            charts[k].update('none'); // 매끄러운 갱신
                         });
 
-                        sessionLog.push(processed);
+                        sessionLog.push({...processed, analysis: {acc_avg: (windows.acc.reduce((a,b)=>a+b,0)/windows.acc.length).toFixed(2)}});
                         db.ref(`class/${studentId}/current`).set(processed);
-                        runAI(raw);
+                        runAI(processed);
                         document.getElementById('btnDownload').disabled = false;
-                    } catch(e) {
-                        // 불완전한 JSON 데이터는 무시
-                    }
+                    } catch(e) { }
                 }
             }
         }
@@ -156,12 +157,10 @@
         };
 
         document.getElementById('btnDownload').onclick = () => {
-            if (sessionLog.length === 0) return;
             const blob = new Blob([sessionLog.map(JSON.stringify).join('\n')], {type: 'application/jsonl'});
-            const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url;
-            a.download = `research_data_${Date.now()}.jsonl`;
+            a.href = URL.createObjectURL(blob);
+            a.download = `data_${Date.now()}.jsonl`;
             a.click();
         };
     </script>
