@@ -2,63 +2,26 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>연구 관리자 실시간 관제 대시보드</title>
+    <title>멀티센서 통합 관제 대시보드</title>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: 'Pretendard', sans-serif; background: #0f172a; color: #f8fafc; padding: 20px; }
-        h1 { text-align: center; color: #38bdf8; }
-        
-        /* 상단 요약 바 */
-        .summary-bar { 
-            display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; 
-            margin-bottom: 30px; background: #1e293b; padding: 20px; border-radius: 15px;
-        }
-        .summary-card { text-align: center; border-right: 1px solid #334155; }
-        .summary-card:last-child { border-right: none; }
-        .summary-card span { font-size: 0.9rem; color: #94a3b8; }
-        .summary-card div { font-size: 1.8rem; font-weight: bold; color: #38bdf8; }
-
-        /* 학생 카드 그리드 */
-        #dashboard { 
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); 
-            gap: 20px; 
-        }
-        .student-card { 
-            background: #1e293b; border-radius: 12px; padding: 15px; 
-            transition: all 0.3s; border: 2px solid transparent;
-        }
-        .student-card.alert { border-color: #ef4444; background: #450a0a; animation: blink 1s infinite; }
-        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
-
-        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        .name { font-size: 1.2rem; font-weight: bold; color: #e2e8f0; }
-        .raw-data { font-family: monospace; font-size: 0.85rem; color: #10b981; }
-        
-        canvas { width: 100% !important; height: 150px !important; }
-        
-        .stats-footer { 
-            display: flex; justify-content: space-between; margin-top: 10px; 
-            font-size: 0.85rem; color: #94a3b8; border-top: 1px solid #334155; padding-top: 10px;
-        }
+        body { font-family: sans-serif; background: #1a1a2e; color: #eaeaea; padding: 20px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+        .card { background: #16213e; padding: 20px; border-radius: 12px; border-left: 5px solid #007bff; }
+        .name { font-size: 1.2rem; font-weight: bold; border-bottom: 1px solid #333; margin-bottom: 10px; display: block; }
+        .data-row { display: flex; justify-content: space-between; margin: 8px 0; font-size: 0.9rem; }
+        .label { color: #999; }
+        .val { font-weight: bold; color: #38bdf8; }
+        .alert { border-color: #e94560; animation: pulse 1s infinite; }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(233, 69, 96, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(233, 69, 96, 0); } 100% { box-shadow: 0 0 0 0 rgba(233, 69, 96, 0); } }
     </style>
 </head>
 <body>
-
-    <h1>🛰️ REAL-TIME RESEARCH CONTROL CENTER</h1>
-
-    <div class="summary-bar">
-        <div class="summary-card"><span>접속 연구원</span><div id="totalStudents">0</div></div>
-        <div class="summary-card"><span>전체 평균 가속도</span><div id="globalAvg">0</div></div>
-        <div class="summary-card"><span>누적 감지 이벤트</span><div id="totalEvents">0</div></div>
-    </div>
-
-    <div id="dashboard">
-        </div>
+    <h1 style="text-align:center; color:#38bdf8;">🛰️ 통합 분석 모니터링 시스템</h1>
+    <div id="dashboard" class="grid"></div>
 
     <script>
-        // [Firebase 설정 - 학생용과 동일하게 유지]
         const firebaseConfig = {
             apiKey: "AIzaSyCINokjlLwLlrE8Qa7SzWGm_-B1V5wr0L8",
             databaseURL: "https://microbit-lab-default-rtdb.firebaseio.com",
@@ -67,102 +30,27 @@
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
-        const studentCharts = {}; // 학생별 차트 객체 저장
-        let globalEventCount = 0;
-
         db.ref('class').on('value', (snapshot) => {
-            const data = snapshot.val();
-            if (!data) return;
-
             const dashboard = document.getElementById('dashboard');
-            let totalAcc = 0;
-            let count = 0;
+            const data = snapshot.val();
+            if(!data) return;
+            dashboard.innerHTML = "";
 
-            Object.keys(data).forEach(studentId => {
-                const sData = data[studentId];
-                totalAcc += sData.acc;
-                count++;
-
-                // 1. 카드 생성 또는 업데이트
-                let card = document.getElementById(`card-${studentId}`);
-                if (!card) {
-                    card = createStudentCard(studentId);
-                    dashboard.appendChild(card);
-                    initChart(studentId);
-                }
-
-                // 2. 실시간 분석 결과 반영 (Alert 처리)
-                if (sData.analysis && sData.analysis.is_impact) {
-                    card.classList.add('alert');
-                    globalEventCount++;
-                    setTimeout(() => card.classList.remove('alert'), 2000);
-                }
-
-                // 3. 텍스트 데이터 업데이트
-                card.querySelector('.raw-acc').innerText = sData.acc;
-                card.querySelector('.avg-acc').innerText = sData.analysis ? sData.analysis.rolling_avg : '-';
-                card.querySelector('.timestamp').innerText = new Date(sData.server_ts).toLocaleTimeString();
-
-                // 4. 그래프 업데이트
-                updateChart(studentId, sData.acc);
-            });
-
-            // 상단 요약 정보 업데이트
-            document.getElementById('totalStudents').innerText = count;
-            document.getElementById('globalAvg').innerText = (totalAcc / count).toFixed(1);
-            document.getElementById('totalEvents').innerText = globalEventCount;
-        });
-
-        function createStudentCard(id) {
-            const div = document.createElement('div');
-            div.id = `card-${id}`;
-            div.className = 'student-card';
-            div.innerHTML = `
-                <div class="card-header">
+            for(let id in data) {
+                const s = data[id];
+                const isAlert = s.acc > 2000 || s.mic > 150;
+                const div = document.createElement('div');
+                div.className = `card ${isAlert ? 'alert' : ''}`;
+                div.innerHTML = `
                     <span class="name">${id}</span>
-                    <span class="raw-data">ACC: <span class="raw-acc">0</span></span>
-                </div>
-                <canvas id="chart-${id}"></canvas>
-                <div class="stats-footer">
-                    <span>최근평균: <b class="avg-acc">0</b></span>
-                    <span class="timestamp" style="font-size:0.7rem;">-</span>
-                </div>
-            `;
-            return div;
-        }
-
-        function initChart(id) {
-            const ctx = document.getElementById(`chart-${id}`).getContext('2d');
-            studentCharts[id] = new Chart(ctx, {
-                type: 'line',
-                data: { labels: new Array(30).fill(""), datasets: [{ 
-                    label: 'Acc Stream', 
-                    data: new Array(30).fill(null), 
-                    borderColor: '#38bdf8', 
-                    borderWidth: 2,
-                    tension: 0.3,
-                    pointRadius: 0
-                }]},
-                options: { 
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: { 
-                        y: { display: false, min: 500, max: 2500 },
-                        x: { display: false }
-                    },
-                    plugins: { legend: { display: false } },
-                    animation: false
-                }
-            });
-        }
-
-        function updateChart(id, value) {
-            const chart = studentCharts[id];
-            if (!chart) return;
-            chart.data.datasets[0].data.push(value);
-            chart.data.datasets[0].data.shift();
-            chart.update();
-        }
+                    <div class="data-row"><span class="label">🌡️ 온도</span><span class="val">${s.temp}°C (Avg: ${s.analysis.temp_avg})</span></div>
+                    <div class="data-row"><span class="label">🔊 소음</span><span class="val">${s.mic} (Avg: ${s.analysis.mic_avg})</span></div>
+                    <div class="data-row"><span class="label">🫨 가속도</span><span class="val">${s.acc} (Avg: ${s.analysis.acc_avg})</span></div>
+                    <div style="font-size:0.7rem; color:#555; margin-top:10px;">Last Sync: ${new Date(s.ts).toLocaleTimeString()}</div>
+                `;
+                dashboard.appendChild(div);
+            }
+        });
     </script>
 </body>
 </html>
