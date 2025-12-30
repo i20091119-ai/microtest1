@@ -2,100 +2,144 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>마이크로비트 학생용 수집기</title>
+    <title>연구용 데이터 파이프라인 - 학생용</title>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: 'Malgun Gothic', sans-serif; text-align: center; background: #f0f2f5; padding: 50px; }
-        .container { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: inline-block; }
-        button { padding: 15px 30px; font-size: 18px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 8px; transition: 0.3s; }
-        button:hover { background: #0056b3; }
-        #status { margin-top: 20px; font-weight: bold; color: #dc3545; }
-        .data-view { margin-top: 20px; padding: 10px; background: #f8f9fa; border-radius: 8px; font-family: monospace; }
+        body { font-family: sans-serif; background: #f4f7f9; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .panel { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 90%; max-width: 800px; margin-bottom: 20px; }
+        .controls { display: flex; gap: 10px; margin-bottom: 20px; justify-content: center; }
+        canvas { max-height: 300px; }
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; text-align: center; }
+        .stat-card { background: #eee; padding: 10px; border-radius: 8px; }
+        .btn-save { background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>🚀 마이크로비트 데이터 송신기</h1>
-        <p>이름: <span id="userName">연결 전</span></p>
-        <button id="btnConnect">마이크로비트 연결하기</button>
-        <div id="status">상태: 연결 안 됨</div>
-        <div class="data-view" id="lastData">최신 데이터: 없음</div>
+
+    <div class="panel">
+        <h2>🔬 실시간 데이터 수집 및 스트리밍 분석</h2>
+        <div class="controls">
+            <button id="btnConnect" style="background:#007bff; color:white; border:none; padding:10px 20px; border-radius:5px;">기기 연결</button>
+            <button id="btnDownload" class="btn-save" disabled>JSONL 다운로드</button>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-card">현재 가속도<br><strong id="currAcc">-</strong></div>
+            <div class="stat-card">최근 5초 평균<br><strong id="avgAcc">-</strong></div>
+            <div class="stat-card">충격 이벤트<br><strong id="eventCount">0</strong></div>
+        </div>
+    </div>
+
+    <div class="panel">
+        <canvas id="realtimeChart"></canvas>
     </div>
 
     <script>
-        // 1. Firebase 설정 (방금 발급받으신 정보로 교체 완료)
+        // [Firebase 설정 - 본인 정보 유지]
         const firebaseConfig = {
             apiKey: "AIzaSyCINokjlLwLlrE8Qa7SzWGm_-B1V5wr0L8",
-            authDomain: "microbit-lab.firebaseapp.com",
             databaseURL: "https://microbit-lab-default-rtdb.firebaseio.com",
             projectId: "microbit-lab",
-            storageBucket: "microbit-lab.firebasestorage.app",
-            messagingSenderId: "688134998676",
-            appId: "1:688134998676:web:ffb0f36fc1de86a61d4281"
         };
-
-        // 2. Firebase 초기화
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
+        const studentId = prompt("연구원 이름을 입력하세요", "Researcher_1");
 
-        // 3. 사용자 이름 입력
-        const studentId = prompt("본인의 이름이나 좌석번호를 입력하세요.", "학생1");
-        document.getElementById('userName').innerText = studentId;
+        let sessionLog = []; // JSONL용 데이터 저장소
+        let accWindow = [];  // 실시간 분석용 윈도우 (최근 50개 샘플)
+        let eventCount = 0;
 
-        let port, reader;
+        // --- Chart.js 설정 ---
+        const ctx = document.getElementById('realtimeChart').getContext('2d');
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: { labels: [], datasets: [{ label: '가속도(변화율)', data: [], borderColor: '#007bff', tension: 0.1, pointRadius: 0 }] },
+            options: { scales: { y: { min: 500, max: 2500 } }, animation: false }
+        });
 
-        // 4. 연결 버튼 클릭 이벤트
-        document.getElementById('btnConnect').onclick = async () => {
-            try {
-                port = await navigator.serial.requestPort();
-                await port.open({ baudRate: 115200 });
-                
-                document.getElementById('status').innerText = "상태: 연결됨 ✅";
-                document.getElementById('status').style.color = "green";
-                document.getElementById('btnConnect').style.display = "none";
-                
-                readLoop();
-            } catch (e) {
-                console.error(e);
-                alert("연결에 실패했습니다. 크롬 브라우저인지 확인해주세요!");
-            }
-        };
-
-        // 5. 데이터 읽기 및 Firebase 전송 루프
-        async function readLoop() {
+        async function readLoop(port) {
             const textDecoder = new TextDecoderStream();
             port.readable.pipeTo(textDecoder.writable);
-            reader = textDecoder.readable.getReader();
+            const reader = textDecoder.readable.getReader();
             let buffer = "";
 
             while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
-                
                 buffer += value;
                 let lines = buffer.split("\n");
                 buffer = lines.pop();
 
                 for (let line of lines) {
                     try {
-                        const cleanLine = line.trim();
-                        if (!cleanLine) continue;
+                        const raw = JSON.parse(line.trim());
                         
-                        const data = JSON.parse(cleanLine);
-                        document.getElementById('lastData').innerText = "최신 데이터: " + cleanLine;
+                        // 1. 실시간 분석 (Moving Average 계산)
+                        accWindow.push(raw.acc);
+                        if(accWindow.length > 50) accWindow.shift();
+                        const avg = accWindow.reduce((a,b)=>a+b, 0) / accWindow.length;
 
-                        // Firebase에 전송
-                        db.ref('class/' + studentId).set({
-                            ...data,
-                            lastUpdate: Date.now()
-                        });
-                    } catch(e) {
-                        // 파싱 에러는 무시
-                    }
+                        // 2. 이상치 감지 (Event Detection)
+                        let isEvent = false;
+                        if(raw.acc > 2000) { eventCount++; isEvent = true; }
+
+                        // 3. 파이프라인 통합 데이터 생성
+                        const processedData = {
+                            ...raw,
+                            analysis: {
+                                rolling_avg: avg.toFixed(2),
+                                is_impact: isEvent
+                            },
+                            server_ts: Date.now()
+                        };
+
+                        // 4. 수집 (JSONL 로그 쌓기)
+                        sessionLog.push(processedData);
+                        document.getElementById('btnDownload').disabled = false;
+
+                        // 5. 시각화 및 UI 업데이트
+                        updateUI(processedData, avg);
+                        
+                        // 6. 클라우드 전송
+                        db.ref('class/' + studentId).set(processedData);
+
+                    } catch(e) {}
                 }
             }
         }
+
+        function updateUI(data, avg) {
+            document.getElementById('currAcc').innerText = data.acc;
+            document.getElementById('avgAcc').innerText = avg.toFixed(1);
+            document.getElementById('eventCount').innerText = eventCount;
+
+            // 차트 업데이트 (최근 100개만 표시)
+            chart.data.labels.push("");
+            chart.data.datasets[0].data.push(data.acc);
+            if(chart.data.labels.length > 100) {
+                chart.data.labels.shift();
+                chart.data.datasets[0].data.shift();
+            }
+            chart.update();
+        }
+
+        // JSONL 다운로드 기능
+        document.getElementById('btnDownload').onclick = () => {
+            const blob = new Blob([sessionLog.map(obj => JSON.stringify(obj)).join('\n')], {type: 'application/jsonl'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `session_${studentId}_${Date.now()}.jsonl`;
+            a.click();
+        };
+
+        document.getElementById('btnConnect').onclick = async () => {
+            const port = await navigator.serial.requestPort();
+            await port.open({ baudRate: 115200 });
+            readLoop(port);
+        };
     </script>
 </body>
 </html>
