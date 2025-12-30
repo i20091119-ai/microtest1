@@ -48,8 +48,11 @@
         let sessionLog = [];
         let windows = { acc: [], mic: [], temp: [] };
         let lastValues = { acc: 1000, mic: 0, temp: 25 };
+        
+        // AI 관련 제어 변수
         let lastAiTime = 0;
         let isAiProcessing = false;
+        let isFirstRun = true; // [추가] 최초 실행 여부를 확인하는 플래그
 
         const charts = {};
         function setupCharts() {
@@ -65,7 +68,11 @@
         setupCharts();
 
         async function runAI(data) {
-            if (Date.now() - lastAiTime < 30000 || isAiProcessing) return; 
+            // [수정] 최초 실행은 10초 대기, 그 이후는 30초 대기 로직 적용
+            const waitTime = isFirstRun ? 10000 : 30000;
+            
+            if (Date.now() - lastAiTime < waitTime || isAiProcessing) return; 
+            
             isAiProcessing = true;
             lastAiTime = Date.now();
             document.getElementById('aiReport').innerText = "서버에서 AI 분석 중...";
@@ -79,6 +86,10 @@
                 const result = await response.json();
                 document.getElementById('aiReport').innerText = result.summary;
                 db.ref(`class/${studentId}/ai_comment`).set(result.summary);
+                
+                // [추가] 성공적으로 첫 분석이 완료되면 플래그를 false로 변경
+                isFirstRun = false; 
+                
             } catch (e) {
                 document.getElementById('aiReport').innerText = "AI 서비스 일시 대기 중...";
             } finally { isAiProcessing = false; }
