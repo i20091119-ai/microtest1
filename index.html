@@ -2,40 +2,39 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>PHD Multi-Sensor AI System</title>
+    <title>PHD Lab - 안정화 버전</title>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: sans-serif; background: #f4f7f9; padding: 20px; color: #333; }
-        .panel { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); max-width: 800px; margin: 0 auto 20px; }
+        body { font-family: sans-serif; background: #f0f4f8; padding: 20px; }
+        .panel { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); max-width: 850px; margin: 0 auto 20px; }
         .stats-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 20px; }
-        .stat-card { padding: 15px; border-radius: 10px; text-align: center; color: white; }
+        .stat-card { padding: 15px; border-radius: 10px; text-align: center; color: white; transition: 0.3s; }
         .acc-color { background: #007bff; } .mic-color { background: #6f42c1; } .temp-color { background: #fd7e14; }
-        .stat-val { font-size: 1.8rem; font-weight: bold; }
-        .ai-box { background: #e3f2fd; border-left: 5px solid #1976d2; padding: 15px; border-radius: 8px; }
-        canvas { max-height: 150px; width: 100% !important; }
-        button { padding: 10px 20px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; color: white; }
+        .stat-val { font-size: 2rem; font-weight: bold; }
+        .ai-box { background: #e3f2fd; border-left: 5px solid #1976d2; padding: 15px; border-radius: 8px; font-weight: bold; }
+        canvas { max-height: 140px; }
+        button { padding: 12px 24px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; background: #007bff; color: white; }
     </style>
 </head>
 <body>
 
     <div class="panel">
-        <h2 style="text-align:center;">🛰️ 실시간 AI-IoT 분석 시스템</h2>
+        <h2 style="text-align:center;">🔬 고성능 AI-IoT 데이터 파이프라인</h2>
         <div style="text-align:center; margin-bottom:20px;">
-            <button id="btnConnect" style="background:#007bff;">기기 연결</button>
+            <button id="btnConnect">마이크로비트 연결</button>
             <button id="btnDownload" style="background:#28a745; margin-left:10px;" disabled>데이터 저장</button>
         </div>
         
         <div class="stats-row">
-            <div class="stat-card acc-color">가속도 평균<br><span class="stat-val" id="avgAcc">0.0</span><br><small>현재: <span id="curAcc">0</span></small></div>
-            <div class="stat-card mic-color">소음 평균<br><span class="stat-val" id="avgMic">0.0</span><br><small>현재: <span id="curMic">0</span></small></div>
-            <div class="stat-card temp-color">온도 평균<br><span class="stat-val" id="avgTemp">0.0</span><br><span id="curTemp">0</span>°C</div>
+            <div class="stat-card acc-color">가속도 평균<br><span class="stat-val" id="avgAcc">0</span></div>
+            <div class="stat-card mic-color">소음 평균<br><span class="stat-val" id="avgMic">0</span></div>
+            <div class="stat-card temp-color">온도 평균<br><span class="stat-val" id="avgTemp">0</span></div>
         </div>
 
         <div class="ai-box">
-            <strong>🤖 Gemini AI 실시간 리포트:</strong>
-            <p id="aiReport">데이터 수집 중...</p>
+            🤖 AI 리포트: <span id="aiReport" style="font-weight: normal;">연결 대기 중...</span>
         </div>
     </div>
 
@@ -44,7 +43,6 @@
     <div class="panel"><canvas id="tempChart"></canvas></div>
 
     <script>
-        // 1. 설정 (Firebase URL 끝에 /가 없는지 꼭 확인하세요)
         const firebaseConfig = { databaseURL: "https://microbit-lab-default-rtdb.firebaseio.com" };
         const API_KEY = "AIzaSyBAsD0zi_FndXgihSx-c2sBb_6Xtmj33aI";
         
@@ -56,59 +54,48 @@
         let windows = { acc: [], mic: [], temp: [] };
         let lastAiTime = 0;
 
-        // 2. 차트 초기화 (성능 최적화 버전)
+        // 차트 초기화 (성능 최적화: 데이터 포인트를 줄임)
         const charts = {};
         function setupCharts() {
             const config = (label, color, min, max) => ({
                 type: 'line',
-                data: { labels: new Array(30).fill(""), datasets: [{ label, data: new Array(30).fill(0), borderColor: color, tension: 0.1, pointRadius: 0 }] },
-                options: { responsive: true, maintainAspectRatio: false, animation: false, scales: { y: { min, max } } }
+                data: { labels: new Array(20).fill(""), datasets: [{ label, data: new Array(20).fill(0), borderColor: color, tension: 0.1, pointRadius: 2 }] },
+                options: { responsive: true, animation: false, scales: { y: { min, max } } }
             });
             charts.acc = new Chart(document.getElementById('accChart'), config('가속도', '#007bff', 800, 1200));
-            charts.mic = new Chart(document.getElementById('micChart'), config('소음', '#6f42c1', 0, 100));
+            charts.mic = new Chart(document.getElementById('micChart'), config('소음', '#6f42c1', 0, 150));
             charts.temp = new Chart(document.getElementById('tempChart'), config('온도', '#fd7e14', 15, 40));
         }
         setupCharts();
 
-        // 3. AI 분석 엔진 (404 에러 해결 버전)
-        async function runAI(summary) {
-            if (Date.now() - lastAiTime < 15000) return; 
+        async function runAI(data) {
+            if (Date.now() - lastAiTime < 20000) return; 
             lastAiTime = Date.now();
-            document.getElementById('aiReport').innerText = "AI 분석 진행 중...";
-
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
             
             try {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
                 const response = await fetch(url, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        contents: [{ parts: [{ text: `데이터 분석: 가속도 ${summary.acc}, 소음 ${summary.mic}, 온도 ${summary.temp}. 현재 상황을 20자 이내로 한 문장 요약해.` }] }]
+                        contents: [{ parts: [{ text: `데이터: 가속도${data.acc}, 소음${data.mic}, 온도${data.temp}. 현재 상황을 15자 내로 요약해.` }] }]
                     })
                 });
-
                 const result = await response.json();
-                if (result.candidates) {
-                    const text = result.candidates[0].content.parts[0].text.trim();
-                    document.getElementById('aiReport').innerText = "✅ " + text;
-                    db.ref(`class/${studentId}/ai_comment`).set(text);
-                }
-            } catch (e) { 
-                console.error("AI API Error:", e);
-                document.getElementById('aiReport').innerText = "AI 응답 대기 중...";
-            }
+                const aiText = result.candidates[0].content.parts[0].text.trim();
+                document.getElementById('aiReport').innerText = aiText;
+                db.ref(`class/${studentId}/ai_comment`).set(aiText);
+            } catch (e) { console.error(e); }
         }
 
-        // 4. 데이터 수신부 (NaN 및 끊김 해결)
         async function readLoop(port) {
             const reader = port.readable.pipeThrough(new TextDecoderStream()).getReader();
             let buffer = "";
-            document.getElementById('btnConnect').innerText = "연결됨";
+            document.getElementById('btnConnect').innerText = "데이터 수신 중...";
 
             while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
-                
                 buffer += value;
                 let lines = buffer.split("\n");
                 buffer = lines.pop();
@@ -116,33 +103,36 @@
                 for (let line of lines) {
                     try {
                         const raw = JSON.parse(line.trim());
-                        // 강제 숫자 변환 (이게 핵심!)
-                        const data = {
-                            acc: Number(raw.acc) || 0,
-                            mic: Number(raw.mic) || 0,
-                            temp: Number(raw.temp) || 0,
-                            ts: Date.now()
-                        };
                         
-                        ['acc', 'mic', 'temp'].forEach(k => {
-                            windows[k].push(data[k]);
-                            if(windows[k].length > 50) windows[k].shift();
-                            
-                            const avg = (windows[k].reduce((a,b)=>a+b,0) / windows[k].length).toFixed(1);
+                        // [핵심] 0값 필터링 및 숫자 변환
+                        const acc = Number(raw.acc) || 0;
+                        const mic = Number(raw.mic) || 0;
+                        const temp = Number(raw.temp) || 0;
 
-                            document.getElementById('cur'+k.charAt(0).toUpperCase()+k.slice(1)).innerText = data[k];
-                            document.getElementById('avg'+k.charAt(0).toUpperCase()+k.slice(1)).innerText = avg;
-                            
-                            charts[k].data.datasets[0].data.push(data[k]);
-                            charts[k].data.datasets[0].data.shift();
-                            charts[k].update('none');
-                        });
+                        // 온도가 0도인 비정상 데이터는 평균 계산에서 제외
+                        if (temp > 0) {
+                            ['acc', 'mic', 'temp'].forEach(k => {
+                                let val = (k === 'acc') ? acc : (k === 'mic') ? mic : temp;
+                                windows[k].push(val);
+                                if(windows[k].length > 30) windows[k].shift();
+                                
+                                // 평균 계산
+                                const avg = (windows[k].reduce((a,b)=>a+b,0) / windows[k].length).toFixed(1);
+                                document.getElementById('avg'+k.charAt(0).toUpperCase()+k.slice(1)).innerText = avg;
+                                
+                                // 차트 업데이트 (부담을 줄이기 위해 가끔 건너뛰거나 빠르게 갱신)
+                                charts[k].data.datasets[0].data.push(val);
+                                charts[k].data.datasets[0].data.shift();
+                                charts[k].update('none');
+                            });
 
-                        sessionLog.push(data);
-                        db.ref(`class/${studentId}/current`).set(data);
-                        runAI(data);
-                        document.getElementById('btnDownload').disabled = false;
-                    } catch(e) { }
+                            const dataObj = { acc, mic, temp, ts: Date.now() };
+                            sessionLog.push(dataObj);
+                            db.ref(`class/${studentId}/current`).set(dataObj);
+                            runAI(dataObj);
+                            document.getElementById('btnDownload').disabled = false;
+                        }
+                    } catch(e) {}
                 }
             }
         }
@@ -157,7 +147,7 @@
             const blob = new Blob([sessionLog.map(JSON.stringify).join('\n')], {type: 'application/jsonl'});
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
-            a.download = `research_data.jsonl`;
+            a.download = `data_${Date.now()}.jsonl`;
             a.click();
         };
     </script>
