@@ -2,31 +2,26 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>멀티센서 통합 관제 대시보드</title>
-    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+    <title>PHD Control Center - 통합 관제</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
     <style>
-        body { font-family: sans-serif; background: #1a1a2e; color: #eaeaea; padding: 20px; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
-        .card { background: #16213e; padding: 20px; border-radius: 12px; border-left: 5px solid #007bff; }
-        .name { font-size: 1.2rem; font-weight: bold; border-bottom: 1px solid #333; margin-bottom: 10px; display: block; }
-        .data-row { display: flex; justify-content: space-between; margin: 8px 0; font-size: 0.9rem; }
-        .label { color: #999; }
-        .val { font-weight: bold; color: #38bdf8; }
-        .alert { border-color: #e94560; animation: pulse 1s infinite; }
-        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(233, 69, 96, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(233, 69, 96, 0); } 100% { box-shadow: 0 0 0 0 rgba(233, 69, 96, 0); } }
+        body { font-family: sans-serif; background: #0f172a; color: #f8fafc; padding: 20px; }
+        h1 { text-align: center; color: #38bdf8; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; margin-top: 20px; }
+        .card { background: #1e293b; border-radius: 12px; padding: 20px; border-left: 5px solid #38bdf8; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .name { font-size: 1.25rem; font-weight: bold; border-bottom: 1px solid #334155; padding-bottom: 10px; margin-bottom: 10px; display: block; }
+        .val-row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 0.95rem; }
+        .ai-msg { background: #0c4a6e; color: #7dd3fc; padding: 12px; border-radius: 8px; margin-top: 15px; font-size: 0.85rem; line-height: 1.4; border: 1px dashed #38bdf8; }
     </style>
 </head>
 <body>
-    <h1 style="text-align:center; color:#38bdf8;">🛰️ 통합 분석 모니터링 시스템</h1>
+
+    <h1>🛰️ 실시간 AI-IoT 통합 연구 관제 대시보드</h1>
     <div id="dashboard" class="grid"></div>
 
     <script>
-        const firebaseConfig = {
-            apiKey: "AIzaSyCINokjlLwLlrE8Qa7SzWGm_-B1V5wr0L8",
-            databaseURL: "https://microbit-lab-default-rtdb.firebaseio.com",
-            projectId: "microbit-lab",
-        };
+        const firebaseConfig = { databaseURL: "https://microbit-lab-default-rtdb.firebaseio.com/" };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
@@ -34,21 +29,20 @@
             const dashboard = document.getElementById('dashboard');
             const data = snapshot.val();
             if(!data) return;
+            
             dashboard.innerHTML = "";
-
-            for(let id in data) {
+            for (let id in data) {
                 const s = data[id];
-                const isAlert = s.acc > 2000 || s.mic > 150;
-                const div = document.createElement('div');
-                div.className = `card ${isAlert ? 'alert' : ''}`;
-                div.innerHTML = `
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.innerHTML = `
                     <span class="name">${id}</span>
-                    <div class="data-row"><span class="label">🌡️ 온도</span><span class="val">${s.temp}°C (Avg: ${s.analysis.temp_avg})</span></div>
-                    <div class="data-row"><span class="label">🔊 소음</span><span class="val">${s.mic} (Avg: ${s.analysis.mic_avg})</span></div>
-                    <div class="data-row"><span class="label">🫨 가속도</span><span class="val">${s.acc} (Avg: ${s.analysis.acc_avg})</span></div>
-                    <div style="font-size:0.7rem; color:#555; margin-top:10px;">Last Sync: ${new Date(s.ts).toLocaleTimeString()}</div>
+                    <div class="val-row"><span>🌡️ 온도:</span> <span>${s.current?.temp || 0} °C</span></div>
+                    <div class="val-row"><span>🔊 소음:</span> <span>${s.current?.mic || 0}</span></div>
+                    <div class="val-row"><span>🫨 가속도:</span> <span>${s.current?.acc || 0}</span></div>
+                    <div class="ai-msg"><strong>🤖 AI Insights:</strong><br>${s.ai_comment || '분석 중...'}</div>
                 `;
-                dashboard.appendChild(div);
+                dashboard.appendChild(card);
             }
         });
     </script>
