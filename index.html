@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>마이크로비트 학생용 수집기</title>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+    <style>
+        body { font-family: 'Malgun Gothic', sans-serif; text-align: center; background: #f0f2f5; padding: 50px; }
+        .container { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: inline-block; }
+        button { padding: 15px 30px; font-size: 18px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 8px; transition: 0.3s; }
+        button:hover { background: #0056b3; }
+        #status { margin-top: 20px; font-weight: bold; color: #dc3545; }
+        .data-view { margin-top: 20px; padding: 10px; background: #f8f9fa; border-radius: 8px; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 마이크로비트 데이터 송신기</h1>
+        <p>이름: <span id="userName">연결 전</span></p>
+        <button id="btnConnect">마이크로비트 연결하기</button>
+        <div id="status">상태: 연결 안 됨</div>
+        <div class="data-view" id="lastData">최신 데이터: 없음</div>
+    </div>
+
+    <script>
+        // 1. Firebase 설정 (방금 발급받으신 정보로 교체 완료)
+        const firebaseConfig = {
+            apiKey: "AIzaSyCINokjlLwLlrE8Qa7SzWGm_-B1V5wr0L8",
+            authDomain: "microbit-lab.firebaseapp.com",
+            databaseURL: "https://microbit-lab-default-rtdb.firebaseio.com",
+            projectId: "microbit-lab",
+            storageBucket: "microbit-lab.firebasestorage.app",
+            messagingSenderId: "688134998676",
+            appId: "1:688134998676:web:ffb0f36fc1de86a61d4281"
+        };
+
+        // 2. Firebase 초기화
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        // 3. 사용자 이름 입력
+        const studentId = prompt("본인의 이름이나 좌석번호를 입력하세요.", "학생1");
+        document.getElementById('userName').innerText = studentId;
+
+        let port, reader;
+
+        // 4. 연결 버튼 클릭 이벤트
+        document.getElementById('btnConnect').onclick = async () => {
+            try {
+                port = await navigator.serial.requestPort();
+                await port.open({ baudRate: 115200 });
+                
+                document.getElementById('status').innerText = "상태: 연결됨 ✅";
+                document.getElementById('status').style.color = "green";
+                document.getElementById('btnConnect').style.display = "none";
+                
+                readLoop();
+            } catch (e) {
+                console.error(e);
+                alert("연결에 실패했습니다. 크롬 브라우저인지 확인해주세요!");
+            }
+        };
+
+        // 5. 데이터 읽기 및 Firebase 전송 루프
+        async function readLoop() {
+            const textDecoder = new TextDecoderStream();
+            port.readable.pipeTo(textDecoder.writable);
+            reader = textDecoder.readable.getReader();
+            let buffer = "";
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                
+                buffer += value;
+                let lines = buffer.split("\n");
+                buffer = lines.pop();
+
+                for (let line of lines) {
+                    try {
+                        const cleanLine = line.trim();
+                        if (!cleanLine) continue;
+                        
+                        const data = JSON.parse(cleanLine);
+                        document.getElementById('lastData').innerText = "최신 데이터: " + cleanLine;
+
+                        // Firebase에 전송
+                        db.ref('class/' + studentId).set({
+                            ...data,
+                            lastUpdate: Date.now()
+                        });
+                    } catch(e) {
+                        // 파싱 에러는 무시
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>
