@@ -2,42 +2,56 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>연구용 데이터 파이프라인 - 학생용</title>
+    <title>멀티센서 데이터 파이프라인 - 학생용</title>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: sans-serif; background: #f4f7f9; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-        .panel { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); width: 90%; max-width: 800px; margin-bottom: 20px; }
-        .controls { display: flex; gap: 10px; margin-bottom: 20px; justify-content: center; }
-        canvas { max-height: 300px; }
-        .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; text-align: center; }
-        .stat-card { background: #eee; padding: 10px; border-radius: 8px; }
-        .btn-save { background: #28a745; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+        body { font-family: sans-serif; background: #f0f4f8; padding: 20px; color: #333; }
+        .panel { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 95%; max-width: 900px; margin: 0 auto 20px; }
+        .stats-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-bottom: 20px; }
+        .stat-card { padding: 15px; border-radius: 10px; text-align: center; color: white; }
+        .acc-color { background: #007bff; } .mic-color { background: #6f42c1; } .temp-color { background: #fd7e14; }
+        .stat-val { font-size: 1.5rem; font-weight: bold; display: block; }
+        .stat-label { font-size: 0.8rem; opacity: 0.9; }
+        canvas { max-height: 200px; margin-top: 10px; }
+        .controls { text-align: center; margin-bottom: 20px; }
+        button { padding: 10px 25px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; }
     </style>
 </head>
 <body>
 
     <div class="panel">
-        <h2>🔬 실시간 데이터 수집 및 스트리밍 분석</h2>
+        <h2 style="text-align:center;">🔬 실시간 멀티센서 스트리밍 분석</h2>
         <div class="controls">
-            <button id="btnConnect" style="background:#007bff; color:white; border:none; padding:10px 20px; border-radius:5px;">기기 연결</button>
-            <button id="btnDownload" class="btn-save" disabled>JSONL 다운로드</button>
+            <button id="btnConnect" style="background:#007bff; color:white;">기기 연결</button>
+            <button id="btnDownload" style="background:#28a745; color:white;" disabled>JSONL 다운로드</button>
         </div>
         
-        <div class="stats-grid">
-            <div class="stat-card">현재 가속도<br><strong id="currAcc">-</strong></div>
-            <div class="stat-card">최근 5초 평균<br><strong id="avgAcc">-</strong></div>
-            <div class="stat-card">충격 이벤트<br><strong id="eventCount">0</strong></div>
+        <div class="stats-row">
+            <div class="stat-card acc-color">
+                <span class="stat-label">가속도 (5s Avg)</span>
+                <span class="stat-val" id="avgAcc">0</span>
+                <small>현재: <span id="curAcc">0</span></small>
+            </div>
+            <div class="stat-card mic-color">
+                <span class="stat-label">소음 (5s Avg)</span>
+                <span class="stat-val" id="avgMic">0</span>
+                <small>현재: <span id="curMic">0</span></small>
+            </div>
+            <div class="stat-card temp-color">
+                <span class="stat-label">온도 (5s Avg)</span>
+                <span class="stat-val" id="avgTemp">0</span>
+                <small>현재: <span id="curTemp">0</span></small>
+            </div>
         </div>
     </div>
 
-    <div class="panel">
-        <canvas id="realtimeChart"></canvas>
-    </div>
+    <div class="panel"><canvas id="accChart"></canvas></div>
+    <div class="panel"><canvas id="micChart"></canvas></div>
+    <div class="panel"><canvas id="tempChart"></canvas></div>
 
     <script>
-        // [Firebase 설정 - 본인 정보 유지]
         const firebaseConfig = {
             apiKey: "AIzaSyCINokjlLwLlrE8Qa7SzWGm_-B1V5wr0L8",
             databaseURL: "https://microbit-lab-default-rtdb.firebaseio.com",
@@ -45,19 +59,25 @@
         };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
-        const studentId = prompt("연구원 이름을 입력하세요", "Researcher_1");
+        const studentId = prompt("이름을 입력하세요", "User_1");
 
-        let sessionLog = []; // JSONL용 데이터 저장소
-        let accWindow = [];  // 실시간 분석용 윈도우 (최근 50개 샘플)
-        let eventCount = 0;
+        let sessionLog = [];
+        let windows = { acc: [], mic: [], temp: [] };
 
-        // --- Chart.js 설정 ---
-        const ctx = document.getElementById('realtimeChart').getContext('2d');
-        const chart = new Chart(ctx, {
-            type: 'line',
-            data: { labels: [], datasets: [{ label: '가속도(변화율)', data: [], borderColor: '#007bff', tension: 0.1, pointRadius: 0 }] },
-            options: { scales: { y: { min: 500, max: 2500 } }, animation: false }
-        });
+        // 공통 차트 생성 함수
+        function createChart(id, label, color, min, max) {
+            return new Chart(document.getElementById(id), {
+                type: 'line',
+                data: { labels: new Array(50).fill(""), datasets: [{ label: label, data: [], borderColor: color, tension: 0.2, pointRadius: 0 }] },
+                options: { scales: { y: { min, max } }, animation: false, plugins: { legend: { display: true } } }
+            });
+        }
+
+        const charts = {
+            acc: createChart('accChart', '가속도 (mg)', '#007bff', 500, 2500),
+            mic: createChart('micChart', '소음 (level)', '#6f42c1', 0, 255),
+            temp: createChart('tempChart', '온도 (°C)', '#fd7e14', 10, 40)
+        };
 
         async function readLoop(port) {
             const textDecoder = new TextDecoderStream();
@@ -75,70 +95,42 @@
                 for (let line of lines) {
                     try {
                         const raw = JSON.parse(line.trim());
-                        
-                        // 1. 실시간 분석 (Moving Average 계산)
-                        accWindow.push(raw.acc);
-                        if(accWindow.length > 50) accWindow.shift();
-                        const avg = accWindow.reduce((a,b)=>a+b, 0) / accWindow.length;
+                        const processed = { ...raw, analysis: {}, ts: Date.now() };
 
-                        // 2. 이상치 감지 (Event Detection)
-                        let isEvent = false;
-                        if(raw.acc > 2000) { eventCount++; isEvent = true; }
+                        ['acc', 'mic', 'temp'].forEach(key => {
+                            windows[key].push(raw[key]);
+                            if(windows[key].length > 50) windows[key].shift();
+                            const avg = windows[key].reduce((a,b)=>a+b,0) / windows[key].length;
+                            processed.analysis[key + '_avg'] = avg.toFixed(2);
+                            
+                            // UI & Chart 업데이트
+                            document.getElementById('cur'+key.charAt(0).toUpperCase()+key.slice(1)).innerText = raw[key];
+                            document.getElementById('avg'+key.charAt(0).toUpperCase()+key.slice(1)).innerText = avg.toFixed(1);
+                            
+                            charts[key].data.datasets[0].data.push(raw[key]);
+                            if(charts[key].data.datasets[0].data.length > 50) charts[key].data.datasets[0].data.shift();
+                            charts[key].update();
+                        });
 
-                        // 3. 파이프라인 통합 데이터 생성
-                        const processedData = {
-                            ...raw,
-                            analysis: {
-                                rolling_avg: avg.toFixed(2),
-                                is_impact: isEvent
-                            },
-                            server_ts: Date.now()
-                        };
-
-                        // 4. 수집 (JSONL 로그 쌓기)
-                        sessionLog.push(processedData);
+                        sessionLog.push(processed);
+                        db.ref('class/' + studentId).set(processed);
                         document.getElementById('btnDownload').disabled = false;
-
-                        // 5. 시각화 및 UI 업데이트
-                        updateUI(processedData, avg);
-                        
-                        // 6. 클라우드 전송
-                        db.ref('class/' + studentId).set(processedData);
-
                     } catch(e) {}
                 }
             }
         }
 
-        function updateUI(data, avg) {
-            document.getElementById('currAcc').innerText = data.acc;
-            document.getElementById('avgAcc').innerText = avg.toFixed(1);
-            document.getElementById('eventCount').innerText = eventCount;
-
-            // 차트 업데이트 (최근 100개만 표시)
-            chart.data.labels.push("");
-            chart.data.datasets[0].data.push(data.acc);
-            if(chart.data.labels.length > 100) {
-                chart.data.labels.shift();
-                chart.data.datasets[0].data.shift();
-            }
-            chart.update();
-        }
-
-        // JSONL 다운로드 기능
-        document.getElementById('btnDownload').onclick = () => {
-            const blob = new Blob([sessionLog.map(obj => JSON.stringify(obj)).join('\n')], {type: 'application/jsonl'});
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `session_${studentId}_${Date.now()}.jsonl`;
-            a.click();
-        };
-
         document.getElementById('btnConnect').onclick = async () => {
             const port = await navigator.serial.requestPort();
             await port.open({ baudRate: 115200 });
             readLoop(port);
+        };
+
+        document.getElementById('btnDownload').onclick = () => {
+            const blob = new Blob([sessionLog.map(obj => JSON.stringify(obj)).join('\n')], {type: 'application/jsonl'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = `research_data_${studentId}.jsonl`; a.click();
         };
     </script>
 </body>
