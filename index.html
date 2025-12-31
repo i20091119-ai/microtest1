@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <title>PHD Lab - 보안 강화 AIoT 시스템</title>
+  <title>Lab - 보안 강화 AIoT 시스템</title>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -14,7 +14,7 @@
     .acc-color { background: #007bff; } .mic-color { background: #6f42c1; } .temp-color { background: #fd7e14; }
     .stat-main { font-size: 1.8rem; font-weight: 800; display: block; }
     .stat-sub { font-size: 0.9rem; margin-top: 5px; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 5px; display: block; }
-    .ai-box { background: #e3f2fd; border-left: 5px solid #1976d2; padding: 15px; border-radius: 8px; font-weight: 500; }
+    .ai-box { background: #e3f2fd; border-left: 5px solid #1976d2; padding: 15px; border-radius: 8px; font-weight: 500; white-space: pre-line; }
     canvas { max-height: 160px; width: 100% !important; }
     button { padding: 12px 24px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; background: #007bff; color: white; }
     button:disabled { opacity: 0.6; cursor: not-allowed; }
@@ -56,9 +56,9 @@
   <script>
     // ===== 설정 =====
     const firebaseConfig = { databaseURL: "https://microbit-lab-default-rtdb.firebaseio.com" };
-    const CLOUD_FUNCTION_URL = "https://aisummary-pn6mgvc5aq-du.a.run.app"; // 너의 aiSummary URL
+    const CLOUD_FUNCTION_URL = "https://aisummary-pn6mgvc5aq-du.a.run.app"; // aiSummary URL
 
-    const AVG_WINDOW_SIZE = 50;    // 네 현재 로직과 동일(약 5~8초 느낌)
+    const AVG_WINDOW_SIZE = 50;  // 약 5~8초 느낌(샘플레이트에 따라)
     const CHART_LEN = 40;
 
     firebase.initializeApp(firebaseConfig);
@@ -70,32 +70,37 @@
     let windows = { acc: [], mic: [], temp: [] };
     let lastValues = { acc: 1000, mic: 0, temp: 25 };
 
-    // "최근 5초 평균 + 직전 5초 평균" 계산용(간단 분할)
-    // - windows[k]에 쌓인 값에서 반으로 나눠 평균 비교로 추세를 만듦
-    function calcAvg(arr) {
-      if (!arr.length) return 0;
-      return arr.reduce((a,b)=>a+b,0) / arr.length;
-    }
-    function calcTrend(arr) {
-      if (arr.length < 10) return "flat"; // 데이터 부족
-      const mid = Math.floor(arr.length / 2);
-      const prev = calcAvg(arr.slice(0, mid));
-      const cur  = calcAvg(arr.slice(mid));
-      const diff = cur - prev;
-
-      // 임계값(너 시스템에 맞게 조정 가능)
-      const eps = Math.max(0.5, Math.abs(prev) * 0.01); // 1% 또는 최소 0.5
-      if (diff > eps) return "up";
-      if (diff < -eps) return "down";
-      return "flat";
-    }
-
-    // 최신 데이터 스냅샷(AI/DB용)
     let latestData = null;
 
     // AI 호출 제어: 자동 1회 + 버튼
     let aiBusy = false;
     let autoAiTimer = null;
+    let autoAiDone = false; // ✅ 자동요약 1회만 보장
+
+    // ===== 유틸 =====
+    function calcAvg(arr) {
+      if (!arr.length) return 0;
+      return arr.reduce((a,b)=>a+b,0) / arr.length;
+    }
+
+    // 반으로 나눠서 (직전 반 평균 vs 최근 반 평균)
+    function calcSplitStats(arr) {
+      if (arr.length < 10) {
+        return { prevAvg: null, curAvg: null, delta: 0, trend: "flat" };
+      }
+      const mid = Math.floor(arr.length / 2);
+      const prevAvg = calcAvg(arr.slice(0, mid));
+      const curAvg  = calcAvg(arr.slice(mid));
+      const delta = curAvg - prevAvg;
+
+      // 임계값(기존 로직 유지)
+      const eps = Math.max(0.5, Math.abs(prevAvg) * 0.01);
+      let trend = "flat";
+      if (delta > eps) trend = "up";
+      else if (delta < -eps) trend = "down";
+
+      return { prevAvg, curAvg, delta, trend };
+    }
 
     // ===== 차트 =====
     const charts = {};
@@ -137,16 +142,27 @@
     function buildAiPayload() {
       if (!latestData) return null;
 
+      const sAcc  = calcSplitStats(windows.acc);
+      const sMic  = calcSplitStats(windows.mic);
+      const sTemp = calcSplitStats(windows.temp);
+
       const avg5 = {
-        acc: calcAvg(windows.acc).toFixed(1),
-        mic: calcAvg(windows.mic).toFixed(1),
-        temp: calcAvg(windows.temp).toFixed(1),
+        acc: Number(calcAvg(windows.acc).toFixed(1)),
+        mic: Number(calcAvg(windows.mic).toFixed(1)),
+        temp: Number(calcAvg(windows.temp).toFixed(1)),
       };
 
       const trend = {
-        acc: calcTrend(windows.acc),
-        mic: calcTrend(windows.mic),
-        temp: calcTrend(windows.temp),
+        acc: sAcc.trend,
+        mic: sMic.trend,
+        temp: sTemp.trend,
+      };
+
+      // ✅ 핵심: 숫자 증감도 함께 전달
+      const deltaAvg = {
+        acc: Number(sAcc.delta.toFixed(1)),
+        mic: Number(sMic.delta.toFixed(1)),
+        temp: Number(sTemp.delta.toFixed(1)),
       };
 
       return {
@@ -157,6 +173,7 @@
         },
         avg5,
         trend,
+        deltaAvg,
         meta: { windowSec: 5, ts: Date.now() }
       };
     }
@@ -191,13 +208,17 @@
     async function readLoop(port) {
       const reader = port.readable.pipeThrough(new TextDecoderStream()).getReader();
       let buffer = "";
-      document.getElementById('btnConnect').innerText = "데이터 수집 중";
-      document.getElementById('btnAiRefresh').disabled = false; // 버튼 활성
 
-      // 연결 후 10초 뒤 1회 자동 요약 (latestData가 있을 때만 실행)
+      document.getElementById('btnConnect').innerText = "데이터 수집 중";
+      document.getElementById('btnAiRefresh').disabled = false;
+
+      // ✅ 연결 후 10초 뒤 자동 요약 "딱 1회"
       if (autoAiTimer) clearTimeout(autoAiTimer);
       autoAiTimer = setTimeout(() => {
-        requestAiSummary();
+        if (!autoAiDone) {
+          autoAiDone = true;
+          requestAiSummary();
+        }
       }, 10000);
 
       while (true) {
