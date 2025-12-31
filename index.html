@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8" />
-  <title>PHD Lab - 보안 강화 AIoT 시스템 (5초 평균+추세 전송)</title>
+  <title>PHD Lab - 보안 강화 AIoT 시스템</title>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -17,7 +17,9 @@
     .ai-box { background: #e3f2fd; border-left: 5px solid #1976d2; padding: 15px; border-radius: 8px; font-weight: 500; }
     canvas { max-height: 160px; width: 100% !important; }
     button { padding: 12px 24px; border-radius: 8px; border: none; cursor: pointer; font-weight: bold; background: #007bff; color: white; }
-    #btnDownload { background:#28a745; margin-left:10px; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn-green { background:#28a745; }
+    .btn-gray { background:#6c757d; }
   </style>
 </head>
 <body>
@@ -25,334 +27,249 @@
     <h2 style="text-align:center;">🛰️ 보안 강화 실시간 AIoT 분석기</h2>
     <div style="text-align:center; margin-bottom:20px;">
       <button id="btnConnect">마이크로비트 연결</button>
-      <button id="btnDownload" disabled>데이터 저장</button>
+      <button id="btnDownload" class="btn-green" style="margin-left:10px;" disabled>데이터 저장</button>
+      <button id="btnAiRefresh" class="btn-gray" style="margin-left:10px;" disabled>AI 요약 새로고침</button>
     </div>
 
     <div class="stats-grid">
       <div class="stat-card acc-color">
         <span class="stat-main" id="curAcc">0</span>
-        <span class="stat-sub">5초 평균: <span id="avgAcc">0.0</span> / 추세: <span id="trAcc">-</span></span>
+        <span class="stat-sub">5초 평균: <span id="avgAcc">0.0</span></span>
       </div>
       <div class="stat-card mic-color">
         <span class="stat-main" id="curMic">0</span>
-        <span class="stat-sub">5초 평균: <span id="avgMic">0.0</span> / 추세: <span id="trMic">-</span></span>
+        <span class="stat-sub">5초 평균: <span id="avgMic">0.0</span></span>
       </div>
       <div class="stat-card temp-color">
         <span class="stat-main" id="curTemp">0</span>
-        <span class="stat-sub">5초 평균: <span id="avgTemp">0.0</span> / 추세: <span id="trTemp">-</span></span>
+        <span class="stat-sub">5초 평균: <span id="avgTemp">0.0</span></span>
       </div>
     </div>
 
-    <div class="ai-box">
-      🤖 <strong>AI 분석:</strong>
-      <span id="aiReport">기기 연결 시 분석을 시작합니다.</span>
-    </div>
+    <div class="ai-box">🤖 <strong>AI 분석:</strong> <span id="aiReport">기기 연결 시 분석을 시작합니다.</span></div>
   </div>
 
   <div class="panel"><canvas id="accChart"></canvas></div>
   <div class="panel"><canvas id="micChart"></canvas></div>
   <div class="panel"><canvas id="tempChart"></canvas></div>
 
-<script>
-  // =========================
-  // 0) 성능/주기(Throttle) 설정
-  // =========================
-  const UI_INTERVAL_MS       = 100;    // UI 10Hz
-  const CHART_INTERVAL_MS    = 200;    // 차트 5Hz
-  const FIREBASE_INTERVAL_MS = 1000;   // Firebase 1Hz
-  const AI_INTERVAL_MS       = 20000;  // AI 20초 (원하면 30초로)
-  const WINDOW_MS            = 5000;   // ✅ 최근 5초
+  <script>
+    // ===== 설정 =====
+    const firebaseConfig = { databaseURL: "https://microbit-lab-default-rtdb.firebaseio.com" };
+    const CLOUD_FUNCTION_URL = "https://aisummary-pn6mgvc5aq-du.a.run.app"; // 너의 aiSummary URL
 
-  // =========================
-  // 1) 초기 설정
-  // =========================
-  const firebaseConfig = { databaseURL: "https://microbit-lab-default-rtdb.firebaseio.com" };
-  const CLOUD_FUNCTION_URL = "https://aisummary-pn6mgvc5aq-du.a.run.app"; // ✅ 본인 함수 URL
+    const AVG_WINDOW_SIZE = 50;    // 네 현재 로직과 동일(약 5~8초 느낌)
+    const CHART_LEN = 40;
 
-  firebase.initializeApp(firebaseConfig);
-  const db = firebase.database();
-  const studentId = "Researcher_1"; // ✅ 필요시 변경
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    const studentId = "Researcher_1";
 
-  // =========================
-  // 2) 상태 변수
-  // =========================
-  let sessionLog = [];
-  let latestData = null;
-  let lastGood = { acc: 1000, mic: 0, temp: 25, ts: Date.now() };
+    // ===== 상태 =====
+    let sessionLog = [];
+    let windows = { acc: [], mic: [], temp: [] };
+    let lastValues = { acc: 1000, mic: 0, temp: 25 };
 
-  // 최근 5초 버퍼(시간 기반)
-  const buffer = { acc: [], mic: [], temp: [] }; // each: [{t, v}, ...]
+    // "최근 5초 평균 + 직전 5초 평균" 계산용(간단 분할)
+    // - windows[k]에 쌓인 값에서 반으로 나눠 평균 비교로 추세를 만듦
+    function calcAvg(arr) {
+      if (!arr.length) return 0;
+      return arr.reduce((a,b)=>a+b,0) / arr.length;
+    }
+    function calcTrend(arr) {
+      if (arr.length < 10) return "flat"; // 데이터 부족
+      const mid = Math.floor(arr.length / 2);
+      const prev = calcAvg(arr.slice(0, mid));
+      const cur  = calcAvg(arr.slice(mid));
+      const diff = cur - prev;
 
-  // AI 호출 제어
-  let lastAiTime = 0;
-  let aiBusy = false;
+      // 임계값(너 시스템에 맞게 조정 가능)
+      const eps = Math.max(0.5, Math.abs(prev) * 0.01); // 1% 또는 최소 0.5
+      if (diff > eps) return "up";
+      if (diff < -eps) return "down";
+      return "flat";
+    }
 
-  // =========================
-  // 3) 차트 초기화
-  // =========================
-  const charts = {};
-  const chartLen = 40;
+    // 최신 데이터 스냅샷(AI/DB용)
+    let latestData = null;
 
-  function setupCharts() {
-    const mk = (label, color, min, max, elId) => new Chart(document.getElementById(elId), {
-      type: 'line',
-      data: {
-        labels: new Array(chartLen).fill(""),
-        datasets: [{
-          label,
-          data: new Array(chartLen).fill(null),
-          borderColor: color,
-          tension: 0.2,
-          pointRadius: 0,
-          borderWidth: 2,
-        }]
-      },
-      options: {
-        responsive: true,
-        animation: false,
-        maintainAspectRatio: false,
-        scales: { y: { min, max }, x: { display: false } }
+    // AI 호출 제어: 자동 1회 + 버튼
+    let aiBusy = false;
+    let autoAiTimer = null;
+
+    // ===== 차트 =====
+    const charts = {};
+    function setupCharts() {
+      const config = (label, color, min, max) => ({
+        type: 'line',
+        data: {
+          labels: new Array(CHART_LEN).fill(""),
+          datasets: [{
+            label,
+            data: new Array(CHART_LEN).fill(null),
+            borderColor: color,
+            tension: 0.2,
+            pointRadius: 0,
+            borderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          animation: false,
+          maintainAspectRatio: false,
+          scales: { y: { min, max }, x: { display: false } }
+        }
+      });
+      charts.acc  = new Chart(document.getElementById('accChart'),  config('가속도', '#007bff', 800, 1200));
+      charts.mic  = new Chart(document.getElementById('micChart'),  config('소음',   '#6f42c1', 0,   150));
+      charts.temp = new Chart(document.getElementById('tempChart'), config('온도',   '#fd7e14', 15,  40));
+    }
+    setupCharts();
+
+    function chartPush(key, v) {
+      const ds = charts[key].data.datasets[0].data;
+      ds.push(v);
+      if (ds.length > CHART_LEN) ds.shift();
+      charts[key].update('none');
+    }
+
+    // ===== AI 요청 payload 만들기 =====
+    function buildAiPayload() {
+      if (!latestData) return null;
+
+      const avg5 = {
+        acc: calcAvg(windows.acc).toFixed(1),
+        mic: calcAvg(windows.mic).toFixed(1),
+        temp: calcAvg(windows.temp).toFixed(1),
+      };
+
+      const trend = {
+        acc: calcTrend(windows.acc),
+        mic: calcTrend(windows.mic),
+        temp: calcTrend(windows.temp),
+      };
+
+      return {
+        cur: {
+          acc: Math.round(latestData.acc),
+          mic: Math.round(latestData.mic),
+          temp: Math.round(latestData.temp),
+        },
+        avg5,
+        trend,
+        meta: { windowSec: 5, ts: Date.now() }
+      };
+    }
+
+    async function requestAiSummary() {
+      const payload = buildAiPayload();
+      if (!payload || aiBusy) return;
+
+      aiBusy = true;
+      document.getElementById('aiReport').innerText = "서버에서 AI 분석 중...";
+
+      try {
+        const resp = await fetch(CLOUD_FUNCTION_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        const json = await resp.json();
+        document.getElementById('aiReport').innerText = json.summary || "요약을 받을 수 없습니다.";
+
+        // Firebase에 저장(원하면 끄기 가능)
+        db.ref(`class/${studentId}/ai_comment`).set(json.summary || "");
+      } catch (e) {
+        document.getElementById('aiReport').innerText = "AI 서비스 일시 대기 중...";
+      } finally {
+        aiBusy = false;
       }
-    });
+    }
 
-    charts.acc  = mk('가속도', '#007bff', 800, 1200, 'accChart');
-    charts.mic  = mk('소음',   '#6f42c1', 0,   150,  'micChart');
-    charts.temp = mk('온도',   '#fd7e14', 15,  40,   'tempChart');
-  }
-  setupCharts();
+    // ===== Serial readLoop =====
+    async function readLoop(port) {
+      const reader = port.readable.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = "";
+      document.getElementById('btnConnect').innerText = "데이터 수집 중";
+      document.getElementById('btnAiRefresh').disabled = false; // 버튼 활성
 
-  // =========================
-  // 4) 최근 5초 통계 계산
-  // =========================
-  function pruneOld(key, now) {
-    const arr = buffer[key];
-    while (arr.length && (now - arr[0].t) > WINDOW_MS) arr.shift();
-  }
+      // 연결 후 10초 뒤 1회 자동 요약 (latestData가 있을 때만 실행)
+      if (autoAiTimer) clearTimeout(autoAiTimer);
+      autoAiTimer = setTimeout(() => {
+        requestAiSummary();
+      }, 10000);
 
-  function pushToBuffer(key, v, t) {
-    buffer[key].push({ t, v });
-    pruneOld(key, t);
-  }
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
 
-  function calcAvg(key) {
-    const arr = buffer[key];
-    if (!arr.length) return null;
-    let sum = 0;
-    for (const p of arr) sum += p.v;
-    return sum / arr.length;
-  }
+        buffer += value;
+        let lines = buffer.split("\n");
+        buffer = lines.pop();
 
-  // 추세: 최근 5초에서 "처음값→마지막값" 변화량으로 판단
-  // (노이즈가 심하면 선형회귀로 바꿀 수도 있는데, 지금은 단순/안정형)
-  function calcTrend(key) {
-    const arr = buffer[key];
-    if (arr.length < 2) return { label: "-", delta: 0 };
+        for (let line of lines) {
+          try {
+            const raw = JSON.parse(line.trim());
+            const data = {
+              acc: (Number(raw.acc) > 0) ? Number(raw.acc) : lastValues.acc,
+              mic: (Number(raw.mic) >= 0) ? Number(raw.mic) : lastValues.mic,
+              temp:(Number(raw.temp) > 0) ? Number(raw.temp) : lastValues.temp,
+              ts: Date.now()
+            };
+            lastValues = { ...data };
+            latestData = data;
 
-    const first = arr[0].v;
-    const last  = arr[arr.length - 1].v;
-    const delta = last - first;
+            // 윈도우(평균) 갱신
+            ['acc','mic','temp'].forEach(k => {
+              windows[k].push(data[k]);
+              if (windows[k].length > AVG_WINDOW_SIZE) windows[k].shift();
+            });
 
-    // 센서별 임계값(너무 민감하면 키우면 됨)
-    const thr = (key === 'temp') ? 0.5 : (key === 'mic') ? 5 : 15;
+            // UI 갱신
+            document.getElementById('curAcc').innerText  = Math.round(data.acc);
+            document.getElementById('curMic').innerText  = Math.round(data.mic);
+            document.getElementById('curTemp').innerText = Math.round(data.temp);
 
-    let label = "안정";
-    if (delta > thr) label = "상승";
-    else if (delta < -thr) label = "하락";
+            document.getElementById('avgAcc').innerText  = calcAvg(windows.acc).toFixed(1);
+            document.getElementById('avgMic').innerText  = calcAvg(windows.mic).toFixed(1);
+            document.getElementById('avgTemp').innerText = calcAvg(windows.temp).toFixed(1);
 
-    return { label, delta };
-  }
+            // 차트 갱신
+            chartPush('acc', data.acc);
+            chartPush('mic', data.mic);
+            chartPush('temp', data.temp);
 
-  function round1(x) { return Math.round(x * 10) / 10; }
+            // 저장
+            sessionLog.push(data);
+            db.ref(`class/${studentId}/current`).set(data);
 
-  // =========================
-  // 5) Serial 읽기(파싱) 루프: 최신값/로그/버퍼만 갱신
-  // =========================
-  async function readLoop(port) {
-    const reader = port.readable.pipeThrough(new TextDecoderStream()).getReader();
-    let bufferStr = "";
-    document.getElementById('btnConnect').innerText = "데이터 수집 중";
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      bufferStr += value;
-
-      const lines = bufferStr.split("\n");
-      bufferStr = lines.pop();
-
-      for (const line of lines) {
-        const s = line.trim();
-        if (!s) continue;
-
-        try {
-          const raw = JSON.parse(s);
-
-          const acc  = (Number(raw.acc)  > 0) ? Number(raw.acc)  : lastGood.acc;
-          const mic  = (Number(raw.mic) >= 0) ? Number(raw.mic)  : lastGood.mic;
-          const temp = (Number(raw.temp) > 0) ? Number(raw.temp) : lastGood.temp;
-
-          const now = Date.now();
-          const data = { acc, mic, temp, ts: now };
-
-          lastGood = data;
-          latestData = data;
-          sessionLog.push(data);
-
-          // ✅ 최근 5초 버퍼에 누적
-          pushToBuffer('acc',  acc,  now);
-          pushToBuffer('mic',  mic,  now);
-          pushToBuffer('temp', temp, now);
-
-          document.getElementById('btnDownload').disabled = false;
-        } catch (e) {
-          // 파싱 실패 라인은 무시
+            document.getElementById('btnDownload').disabled = false;
+          } catch (e) {
+            // 파싱 실패 무시
+          }
         }
       }
     }
-  }
 
-  // =========================
-  // 6) UI 업데이트(10Hz)
-  // =========================
-  setInterval(() => {
-    if (!latestData) return;
-
-    const { acc, mic, temp, ts } = latestData;
-
-    // 현재값
-    document.getElementById('curAcc').innerText  = Math.round(acc);
-    document.getElementById('curMic').innerText  = Math.round(mic);
-    document.getElementById('curTemp').innerText = Math.round(temp);
-
-    // 5초 평균
-    const aAvg = calcAvg('acc');  const mAvg = calcAvg('mic');  const tAvg = calcAvg('temp');
-    document.getElementById('avgAcc').innerText  = (aAvg == null) ? "-" : aAvg.toFixed(1);
-    document.getElementById('avgMic').innerText  = (mAvg == null) ? "-" : mAvg.toFixed(1);
-    document.getElementById('avgTemp').innerText = (tAvg == null) ? "-" : tAvg.toFixed(1);
-
-    // 5초 추세
-    const aTr = calcTrend('acc'); const mTr = calcTrend('mic'); const tTr = calcTrend('temp');
-    document.getElementById('trAcc').innerText  = `${aTr.label}(${Math.round(aTr.delta)})`;
-    document.getElementById('trMic').innerText  = `${mTr.label}(${Math.round(mTr.delta)})`;
-    document.getElementById('trTemp').innerText = `${tTr.label}(${round1(tTr.delta)})`;
-  }, UI_INTERVAL_MS);
-
-  // =========================
-  // 7) 차트 업데이트(5Hz)
-  // =========================
-  setInterval(() => {
-    if (!latestData) return;
-
-    const upd = (key, v) => {
-      const ds = charts[key].data.datasets[0].data;
-      ds.push(v);
-      if (ds.length > chartLen) ds.shift();
-      charts[key].update('none');
+    // ===== 버튼 =====
+    document.getElementById('btnConnect').onclick = async () => {
+      const port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 115200 });
+      readLoop(port);
     };
 
-    upd('acc', latestData.acc);
-    upd('mic', latestData.mic);
-    upd('temp', latestData.temp);
-  }, CHART_INTERVAL_MS);
+    document.getElementById('btnDownload').onclick = () => {
+      const blob = new Blob([sessionLog.map(JSON.stringify).join('\n')], {type:'application/jsonl'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `PHD_secure_log_${Date.now()}.jsonl`;
+      a.click();
+    };
 
-  // =========================
-  // 8) Firebase 전송(1Hz)
-  // =========================
-  setInterval(() => {
-    if (!latestData) return;
-    db.ref(`class/${studentId}/current`).set(latestData);
-  }, FIREBASE_INTERVAL_MS);
-
-  // =========================
-  // 9) AI 호출(20초) - ✅ 현재값 + 5초 평균 + 추세(변화량) 전송
-  // =========================
-  async function callAI(payload) {
-    const response = await fetch(CLOUD_FUNCTION_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    return await response.json();
-  }
-
-  setInterval(async () => {
-    if (!latestData) return;
-    if (aiBusy) return;
-    if (Date.now() - lastAiTime < AI_INTERVAL_MS) return;
-
-    // 버퍼가 충분히 쌓였을 때만(최소 2개)
-    if (buffer.acc.length < 2 || buffer.mic.length < 2 || buffer.temp.length < 2) return;
-
-    aiBusy = true;
-    lastAiTime = Date.now();
-    document.getElementById('aiReport').innerText = "서버에서 AI 분석 중...";
-
-    try {
-      const aAvg = calcAvg('acc'), mAvg = calcAvg('mic'), tAvg = calcAvg('temp');
-      const aTr = calcTrend('acc'), mTr = calcTrend('mic'), tTr = calcTrend('temp');
-
-      const payload = {
-        // 현재값
-        acc: latestData.acc,
-        mic: latestData.mic,
-        temp: latestData.temp,
-
-        // ✅ 최근 5초 평균
-        avg5s: {
-          acc: (aAvg == null) ? null : round1(aAvg),
-          mic: (mAvg == null) ? null : round1(mAvg),
-          temp:(tAvg == null) ? null : round1(tAvg),
-        },
-
-        // ✅ 최근 5초 추세(라벨 + 변화량)
-        trend5s: {
-          acc:  { label: aTr.label,  delta: Math.round(aTr.delta) },
-          mic:  { label: mTr.label,  delta: Math.round(mTr.delta) },
-          temp: { label: tTr.label,  delta: round1(tTr.delta) },
-        },
-
-        // 메타
-        windowMs: WINDOW_MS,
-        n5s: {
-          acc: buffer.acc.length,
-          mic: buffer.mic.length,
-          temp: buffer.temp.length,
-        },
-        ts: Date.now(),
-      };
-
-      const result = await callAI(payload);
-
-      const summary = (result && result.summary) ? result.summary : "AI 응답이 비어 있습니다.";
-      document.getElementById('aiReport').innerText = summary;
-      db.ref(`class/${studentId}/ai_comment`).set(summary);
-
-    } catch (e) {
-      document.getElementById('aiReport').innerText = "AI 서비스 일시 대기 중...";
-    } finally {
-      aiBusy = false;
-    }
-  }, 500); // 내부 타이머는 0.5초마다 조건 체크 (실제 호출은 AI_INTERVAL_MS로 제한)
-
-  // =========================
-  // 10) 연결 버튼
-  // =========================
-  document.getElementById('btnConnect').onclick = async () => {
-    const port = await navigator.serial.requestPort();
-    await port.open({ baudRate: 115200 });
-    readLoop(port);
-  };
-
-  // =========================
-  // 11) JSONL 저장
-  // =========================
-  document.getElementById('btnDownload').onclick = () => {
-    const blob = new Blob([sessionLog.map(JSON.stringify).join('\n')], { type: 'application/jsonl' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `PHD_secure_log_${Date.now()}.jsonl`;
-    a.click();
-  };
-</script>
+    document.getElementById('btnAiRefresh').onclick = () => {
+      requestAiSummary();
+    };
+  </script>
 </body>
 </html>
